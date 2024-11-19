@@ -1,5 +1,7 @@
 #!/usr/bin/env python3
+# pip3 install XlsxWriter
 
+import xlsxwriter
 import subprocess
 import argparse
 import os
@@ -8,11 +10,12 @@ import sys
 import datetime
 import re
 
-base = "/home/svp/test"
-id_xref = "/home/svp/test/ID.csv"
-dup_xref = "/home/svp/test/DUP.csv"
+base = "/home/svp/schuelerdaten"
+id_xref = "/home/svp/schuelerdaten/ID.csv"
+dup_xref = "/home/svp/schuelerdaten/DUP.csv"
 dstdir = f"{base}/ASV-Export"
 webuntis = os.path.join(dstdir, "import_asv_nach_webuntis.csv")
+webuntis_dst = os.path.join(dstdir+"WebUntis", "import_asv_nach_webuntis.csv")
 perpustakaan = os.path.join(dstdir, "perpustakaan.csv")
 netman = os.path.join(dstdir, "import_asv_nach_netman.csv")
 moodle = os.path.join(dstdir, "import_asv_nach_moodle.csv")
@@ -20,17 +23,45 @@ cloudstack = os.path.join(dstdir, "import_asv_nach_cloudstack.csv")
 m365dir = os.path.join(dstdir, "m365")
 EFTdir = os.path.join(dstdir, "EFT")
 ausweisdir = os.path.join(dstdir, "schuelerausweise")
-fehlzeiten = f"{base}/ausbilder_Emails.csv" #"/var/www/fehlzeiten/uploads/ausbilder_Emails.csv"
+buecherlistendir = os.path.join(dstdir, "Buecherlisten")
+fehlzeiten = "/var/www/fehlzeiten/uploads/ausbilder_Emails.csv"
 ausbilder_stammdaten = os.path.join(dstdir, "ausbilder.csv")
 post_cmd = ""  # umount /home/svp/bin/asv/mnt/"
 sourcepath = f"{base}/mnt/export.csv"
-destdir = "/home/svp/test/mnt"
+destdir = "/home/svp/schuelerdaten/mnt"
 
 exclude = ['1BFE0', '1BFI0', '2BFE0', '2BFE0_Absage', 'E1BT0', 'E1EG0', 'E1FI0', 'E1FI0_unklar', 
            'E1FS0', 'E1GS0', 'E1IT0', 'E1ME0', 'E1RF0', 'E2FI0', 'E2RF0', 'E2EG0', 'FTE0_DAT', 
            'FTE0_ENT', 'FTET0_ENT', 'FTET0_DAT', 'E2EG0_unklar', 'E_unklar', 'Papierkorb', 
            'FEEG_WL', 'FEET2_alt', '20_FTE0_ENT']
 exclude_re = 'y_.*|.*VOR|.*VORZ|.*VZ'
+
+## import file format specifications
+
+CSV_ID              = 0
+CSV_NAME            = 1
+CSV_FIRSTNAME       = 2
+CSV_GENDER          = 3
+CSV_CLASS           = 6
+CSV_BIRTHDAY        = 4
+CSV_ENTRYD          = 8
+CSV_EXITD           = 9
+CSV_BIRTHPLACE      = 23
+CSV_STREET          = 24
+CSV_NO              = 25
+CSV_ZIP             = 26
+CSV_TOWN            = 27
+CSV_TOWN2           = 28
+CSV_EDUCATION       = 29
+CSV_EDUCATION_SHORT = 5
+CSV_SALUTATION      = 22
+CSV_EMAIL           = 31
+CSV_VOLLJAEHRIG     = 32
+CSV_AUSBILDER       = 33
+CSV_AUSBILDER2      = 34
+
+MIN_LINES = 10           # quit if fewer than this lines in input file (errorneous export?)
+
 python_pid=os.getpid()
 infile = f"export_{python_pid}.csv"
 
@@ -48,11 +79,16 @@ args = parser.parse_args()
 q = args.q  # quiet flag
 
 if not os.path.isdir(f"{destdir}/alt"):
-    subprocess.run(["mount", "/home/svp/bin/asv/mnt/"])
+    subprocess.run(["mount", destdir])
 
-if os.path.isfile(webuntis) and os.path.getmtime(webuntis) >= os.path.getmtime(sourcepath):
+if not os.path.isfile(sourcepath) or ( os.path.isfile(webuntis_dst) and os.path.getmtime(webuntis_dst) >= os.path.getmtime(sourcepath)):
     if not q: print("Up-to-date. Nothing to export.")
     exit(0)
+
+num_lines = sum(1 for _ in open(sourcepath, 'rb'))
+if (num_lines<MIN_LINES):
+    print ("Too few lines in source file, exiting")
+    exit(1)
 
 shutil.copy(sourcepath, infile)
 
@@ -96,7 +132,7 @@ fehlzeitenfile=open(fehlzeiten, 'w')
 #
 #             shortname: login
 #     Schlüssel(extern): login für bestehende, sonst ASV-ID
-webfile.write("login;shortname;idnumber;lastname;firstname;email;Klasse;birthday;Austrittsdatum;Eintrittsdatum\n")
+webfile.write("login;shortname;idnumber;lastname;firstname;email;Klasse;birthday;Austrittsdatum;Eintrittsdatum;volljaehrig\n")
 # Moodle:
 moodlefile.write("lastname;firstname;course1;username;mail\n")
 # Netman:
@@ -119,7 +155,7 @@ with open(infile, 'r') as f:
             firstline = "1"
             continue
         
-        id_ = line[0].replace('"', '')
+        id_ = line[CSV_ID].replace('"', '')
 
         asvid = id_
         idn = re.search('..*[-]([0-9a-f]*)$', id_).group(1)
@@ -129,30 +165,32 @@ with open(infile, 'r') as f:
             idn = duplate[id_]
         idx = "asv" + idn
         svpid = idxlate.get(id_, None)
-        name = line[1].replace('"', '')
-        firstname = line[2].replace('"', '')
-        class_ = line[6].replace('"', '')
+        name = line[CSV_NAME].replace('"', '')
+        firstname = line[CSV_FIRSTNAME].replace('"', '')
+        class_ = line[CSV_CLASS].replace('"', '')
         pclass = class_.replace('"', '')
         nclass = pclass.replace('/', '_')
         oclass = f"{oyear}_{pclass}".replace('/', '_')
         m365file      =open(f'{m365dir}/{oclass}.csv', 'a')
         EFTfile       =open(f'{EFTdir}/{oclass}.csv', 'a')
         ausweisfile   =open(f'{ausweisdir}/{nclass}.csv', 'a')
+        ausweisalle   =open(f'{ausweisdir}/alle.csv', 'a')
 
         if pclass in exclude:
             continue
         if re.match(exclude_re, pclass):
             continue
-        email = line[31].replace('"', '')
-        ausbilder = line[32].replace('"', '')
-        if len(line)>33:
-                ausbilder2 = line[33].replace('"', '').replace(' ', '')  
+        email       = line[CSV_EMAIL].replace('"', '')
+        volljaehrig = line[CSV_VOLLJAEHRIG].replace('"', '')
+        ausbilder   = line[CSV_AUSBILDER].replace('"', '')
+        if len(line)>34:
+                ausbilder2 = line[CSV_AUSBILDER2].replace('"', '').replace(' ', '')  
         else:   ausbilder2=""
 
-        birthday = line[4].replace('"', '')
+        birthday = line[CSV_BIRTHDAY].replace('"', '')
         pass_ = f"HHS-{birthday}"
-        entryd = line[8].replace('"', '')
-        exitd = line[9].replace('"', '')
+        entryd = line[CSV_ENTRYD].replace('"', '')
+        exitd = line[CSV_EXITD].replace('"', '')
 
         special_char_map = {ord('ä'):'ae', ord('ü'):'ue', ord('ö'):'oe', 
                             ord('Ä'):'Ae', ord('Ü'):'Ue', ord('Ö'):'oe',ord('ß'):'ss'}
@@ -174,20 +212,21 @@ with open(infile, 'r') as f:
             #username = f"{username[:4]}-{idn}".replace(' ', '_')
 
         semail = f'"{username}@stud.hhs.karlsruhe.de"' if email == '""' else email
-        webfile.write    (f'"{username}";"{username}";"{id_}";"{name}";"{firstname}";"{email}";"{class_}";"{birthday}";"{exitd}";"{entryd}"\n')
+        webfile.write    (f'"{username}";"{username}";"{id_}";"{name}";"{firstname}";"{email}";"{class_}";"{birthday}";"{exitd}";"{entryd}";"{volljaehrig}"\n')
         moodlefile.write (f'{name};{firstname};{class_};{username};{semail}\n')
         netmanfile.write (f'{username};{id_};{name};{firstname};{pass_};{class_};{birthday}\n')
         cloudfile.write  (f'{username};{class_};{birthday}\n')
         m365file.write   (f'{username}@stud.hhs.karlsruhe.de,{username},{oclass},{username}.{oclass},,{oclass},,,,,,,,,,\n')
         EFTfile.write    (f'"{name}","{firstname}",{username},,,\n')
-        ausweisfile.write(f'"{name}";"{firstname}";"{class_}";"{birthday}";{line[23]};{line[24]};{line[25]};{line[26]};{line[27]};{line[28]};{line[29]};{line[5]};{line[22]};{line[8]};{line[9]};{username}\n')
+        ausweisfile.write(f'"{name}";"{firstname}";"{class_}";"{birthday}";{line[CSV_BIRTHPLACE]};{line[CSV_STREET]};{line[CSV_NO]};{line[CSV_ZIP]};{line[CSV_TOWN]};{line[CSV_TOWN2]};{line[CSV_EDUCATION]};{line[CSV_EDUCATION_SHORT]};{line[CSV_SALUTATION]};{line[CSV_GENDER]};{line[CSV_ENTRYD]};{line[CSV_EXITD]};{username};{id_}\n')
+        ausweisalle.write(f'"{name}";"{firstname}";"{class_}";"{birthday}";{line[CSV_BIRTHPLACE]};{line[CSV_STREET]};{line[CSV_NO]};{line[CSV_ZIP]};{line[CSV_TOWN]};{line[CSV_TOWN2]};{line[CSV_EDUCATION]};{line[CSV_EDUCATION_SHORT]};{line[CSV_SALUTATION]};{line[CSV_GENDER]};{line[CSV_ENTRYD]};{line[CSV_EXITD]};{username};{id_}\n')
         fehlzeitenfile.write(f'{asvid};{ausbilder}\n')
         if ausbilder2:
             fehlzeitenfile.write(f'{asvid};{ausbilder2}\n')
         
         if not q: print(f"{c}/{lines}", end='\r')
         c += 1
-for file in (webfile, moodlefile, netmanfile, cloudfile, m365file, ausweisfile, fehlzeitenfile):
+for file in (webfile, moodlefile, netmanfile, cloudfile, m365file, ausweisfile, ausweisalle, fehlzeitenfile):
     file.close()
 
 # Update file paths if necessary
@@ -221,7 +260,7 @@ for f in os.listdir(ausweisdir):
         with open(file_path, 'r+') as file:
             content = file.read()
             file.seek(0, 0)
-            file.write('Familienname;Rufname;Klasse;Geburtsdatum;Geburtsort;Schüler/in Strasse;Schüler/in Hausnummer;Schüler/in Anschrift PLZ;Schüler/in Anschrift Ort;Schüler/in Ortsteil der Anschrift;Bildungsgang Stichtag.Langform;Bildungsgang Stichtag.Kurzform;Anrede.Langform;Eintritt in diese Schule am;voraussichtlicher Austritt am;ID\n' + content)
+            file.write('Familienname;Rufname;Klasse;Geburtsdatum;Geburtsort;Schüler/in Strasse;Schüler/in Hausnummer;Schüler/in Anschrift PLZ;Schüler/in Anschrift Ort;Schüler/in Ortsteil der Anschrift;Bildungsgang Stichtag.Langform;Bildungsgang Stichtag.Kurzform;Anrede.Langform;Geschlecht;Eintritt in diese Schule am;voraussichtlicher Austritt am;ID;UUID\n' + content)
             file.close()
         # Remove double quotes from the file if needed
         # content = content.replace('"', '')
@@ -239,7 +278,7 @@ if duplicates:
 os.system(f"rm {infile}")
 
 # Copy files to destination directories
-os.system(f"cp {webuntis} {destdir}")
+os.system(f"cp {webuntis} {destdir}/WebUntis/")
 print("Perpustakaan export.")
 os.system(f"cp {webuntis} {perpustakaan}")
 
@@ -254,11 +293,55 @@ with open(f"{perpustakaan}.2", 'r+') as file:
     file.seek(0,0)
     file.write(content)
 
+
+
+for f in os.listdir(ausweisdir):
+    classname=(f.split('.'))[0]
+    workbook = xlsxwriter.Workbook(f"{buecherlistendir}/{classname}.xlsx")
+    worksheet = workbook.add_worksheet()
+    worksheet.set_column(0,0,20)
+    worksheet.set_column(1,1,14)
+    worksheet.set_column(2,2,15)
+    worksheet.set_column(3,3,10)
+    worksheet.set_column(4,4,26)
+    barcode = workbook.add_format()
+    barcode.set_font_name('CCode39')
+    bold = workbook.add_format()
+    bold.set_bold()
+    worksheet.set_row(0, 15, bold)
+    header = ['Nachname', 'Vorname', 'Klasse', 'ID', 'Barcode']
+    col=0
+    for item in (header):
+        worksheet.write(0, col, item)
+        col += 1
+    firstline = ""
+    row=1
+    with open(f"{ausweisdir}/{f}", 'r') as classfile:
+        for line in classfile:
+            if not firstline:
+                firstline = "1"
+                continue
+            line = line.strip().split(';')
+            name = line[0].replace('"', '')
+            firstname = line[1].replace('"', '')
+            id = line[16]
+            nclass = line[2].replace('"', '')
+            line = [name, firstname, nclass, id]
+            col = 0
+            for item in (line):
+                worksheet.write(row, col, item)
+                col += 1
+            worksheet.write(row, col, f"=\"*\"&D{row+1}&\"*\"", barcode)
+            row += 1
+    workbook.close()
+
 os.rename(f"{perpustakaan}.2", perpustakaan)
-os.system(f"mv {perpustakaan} {destdir}")
-os.system(f"cp {ausbilder_stammdaten} {destdir}")
+os.system(f"mv {perpustakaan} {destdir}/perpustakaan")
+os.system(f"cp {ausbilder_stammdaten} {destdir}/WebUntis")
+os.system(f"cp {buecherlistendir}/* {destdir}/Buecherlisten")
 os.system(f"rm -rf {destdir}/schuelerausweise/*")
 os.system(f"cp {ausweisdir}/* {destdir}/schuelerausweise/")
+os.system(f"mv {sourcepath} {destdir}/alt/ || mv {sourcepath} {destdir}/alt/$$.csv")
 
 files += 4
 
@@ -274,7 +357,7 @@ if not args.n:
     if not q: print("Upload to lcloud done.")
     if not q: print("")
     if not q: print("Upload to cloudstack...")
-    os.system(f"scp ../{cloudstack} administrator@192.168.201.204:/usr/local/share/openstack-data")
+    os.system(f"scp {cloudstack} administrator@192.168.201.204:/usr/local/share/openstack-data")
 
 if not q: print("Unmounting source.")
 # Execute post command and additional actions (not directly translatable to this context)
