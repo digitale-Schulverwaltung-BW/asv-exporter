@@ -16,5 +16,7 @@ Da das Skript beim Aufruf die Aktualität der konvertierten Dateien prüft und s
 
 ## Parameter
 ```-q``` Quiet mode, keine Ausgaben. Ohne diesen Switch zeigt das Skript den Fortschritt beim Konvertieren und die Uploads an.
+
 ```-n``` No uploads. Keine Upload-Kommandos werden ausgeführt.
+
 ```-h``` help
