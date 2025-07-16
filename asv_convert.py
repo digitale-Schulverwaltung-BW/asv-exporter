@@ -217,7 +217,7 @@ with open(infile, 'r') as f:
         idn = re.search('..*[-]([0-9a-f]*)$', id_).group(1)
 
         if id_ in duplate:
-            print(f"DUP: {id_}=>{duplate[id_]}")
+            if not q: print(f"DUP: {id_}=>{duplate[id_]}")
             idn = duplate[id_]
         idx = "asv" + idn
         svpid = idxlate.get(id_, None)
@@ -352,7 +352,7 @@ if webfile!=None:
 # Copy files to destination directories
 if webuntis: os.system(f"cp {webuntis} {destdir}/WebUntis/")
 if webuntis:
-    print("Perpustakaan export.")
+    if not q: print("Perpustakaan export.")
     if perpustakaan: os.system(f"cp {webuntis} {perpustakaan}")
 
 # Modify and move files
