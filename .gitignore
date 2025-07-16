@@ -1,0 +1,5 @@
+ASV-Export/*
+*.csv
+*.zip
+mnt/export.csv.last
+asv_convert.sh
